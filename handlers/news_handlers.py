@@ -5,7 +5,7 @@ import threading
 import feedparser
 
 from speaker import speak
-from personality import get_browser_opening, get_thinking_pause, get_summary_done
+from personality import get_processing_start, get_thinking_pause, get_summary_done
 from brain import summarize as llm_summarize, is_available as llm_available
 import browser as web
 from context import update_context
@@ -56,7 +56,7 @@ def handle_news(text):
     if topic_name:
         speak(f"Got it. Pulling up {topic_name} news for you.")
     else:
-        speak(get_browser_opening())
+        speak(get_processing_start())
 
     try:
         if topic_name:

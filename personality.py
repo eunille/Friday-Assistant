@@ -59,6 +59,20 @@ def get_browser_opening():
     ])
 
 
+def get_processing_start():
+    """Said at the very beginning when starting to process a request — Iron Man / Friday style.
+    This is the 'okay boss, let me check' moment before the actual processing."""
+    return random.choice([
+        "Okay boss, let me check.",
+        "Alright boss, one second.",
+        "Copy that, checking now.",
+        "Got it, one moment.",
+        "On it boss, give me a sec.",
+        "Alright, let me pull that up.",
+        "Okay boss, running that now.",
+    ])
+
+
 def get_data_ready():
     """Said when data is ready to present."""
     return random.choice([
@@ -100,16 +114,17 @@ def get_summary_done():
 
 
 def get_thinking_pause():
-    """Short hesitation filler before delivering data. 'boss' appears here only — never again in the response."""
+    """Short hesitation before delivering data — Iron Man / Friday style.
+    Includes 'Hmmmm' thinking sounds and 'according to' lead-ins."""
     return random.choice([
-        "Alright, boss —",
-        "Hmm.",
-        "Let me see.",
-        "Right.",
-        "Copy that, boss —",
-        "Okay.",
-        "Noted, boss —",
-        "Alright.",
+        "Hmmmm, according to",
+        "Alright, according to",
+        "Okay, so according to",
+        "Let's see... according to",
+        "Right, so according to",
+        "Hmmmm, looks like according to",
+        "Okay boss, according to",
+        "Alright boss, according to",
     ])
 
 

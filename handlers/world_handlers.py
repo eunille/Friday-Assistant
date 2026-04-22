@@ -4,7 +4,7 @@ import feedparser
 
 from speaker import speak
 from brain import chat as llm_chat, is_available as llm_available, summarize as llm_summarize
-from personality import get_summary_done, get_thinking_pause
+from personality import get_summary_done, get_thinking_pause, get_processing_start
 import browser as web
 from context import update_context
 from logger import log
@@ -47,7 +47,7 @@ def _fetch_headlines(max_items=8):
 def handle_world_monitor(text):
     """Fetch world news via RSS, summarize with LLM, open World Monitor."""
     global _last_overview, _last_headlines
-    speak("Okay boss, just a second.")
+    speak(get_processing_start())
 
     # Fetch RSS and open browser in parallel
     headlines_result = []
@@ -78,12 +78,14 @@ def handle_world_monitor(text):
     _last_headlines = "\n".join(headlines_result)
     log.info(f"WM: fetched {len(headlines_result)} headlines")
 
-    # Summarize with LLM
+    # Summarize with LLM — make it juicy and demo-friendly
     if llm_available():
         overview = llm_summarize(
             _last_headlines,
-            "Summarize these news headlines into a brief spoken overview. "
-            "2-3 sentences covering the biggest stories. Be concise and factual.",
+            "You're F.R.I.D.A.Y., Tony Stark's AI. Summarize these news headlines in 2-3 sentences. "
+            "Make it engaging and informative — highlight the most dramatic or impactful stories first. "
+            "Use active language. Don't say 'according to' or 'the news says' — just state the facts with confidence. "
+            "Example: 'Markets are in freefall after the Fed announcement. Meanwhile, tensions escalate in...'",
             max_predict=150,
         )
     else:
@@ -92,12 +94,12 @@ def handle_world_monitor(text):
         overview = ". ".join(h.split(".")[0] for h in top3)
 
     if overview:
-        speak(f"{get_thinking_pause()} According to the latest reports, {overview}")
+        speak(f"{get_thinking_pause()} the latest reports, {overview}")
         _last_overview = overview
     else:
         # LLM failed — fall back to reading headlines
         top3 = ". ".join(h.split(".")[0] for h in headlines_result[:3])
-        speak(f"{get_thinking_pause()} Here are the top stories. {top3}.")
+        speak(f"{get_thinking_pause()} the latest headlines. {top3}.")
         _last_overview = top3
 
     speak(get_summary_done())

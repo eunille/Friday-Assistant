@@ -1,6 +1,7 @@
 # speaker_elevenlabs.py — ElevenLabs TTS integration
 import os
 import subprocess
+import tempfile
 from typing import Optional
 from logger import log
 
@@ -22,6 +23,18 @@ except ImportError:
 _client: Optional[ElevenLabs] = None
 _voice_id: Optional[str] = None
 _initialized = False
+
+
+def _get_pause_duration() -> int:
+    """Get pause duration between sentences in milliseconds (default 150ms)."""
+    try:
+        from config_loader import get as cfg
+        pause = cfg("tts", "sentence_pause_ms")
+        if pause is None:
+            return 150  # Default: 150ms for F.R.I.D.A.Y. clipped delivery
+        return int(pause)
+    except Exception:
+        return 150
 
 
 def _init_elevenlabs():
@@ -79,6 +92,7 @@ def _get_friday_speed() -> float:
 def speak_elevenlabs(text: str, stability: float = 0.35, similarity_boost: float = 0.85) -> bool:
     """
     Synthesize speech using ElevenLabs and play via paplay.
+    Uses F.R.I.D.A.Y.-style sentence pacing with pauses between sentences.
     
     Args:
         text: Text to synthesize
@@ -96,86 +110,165 @@ def speak_elevenlabs(text: str, stability: float = 0.35, similarity_boost: float
     try:
         log.info(f"ElevenLabs synthesizing: {text[:60]}...")
         
-        # Generate audio from ElevenLabs API
-        audio_generator = _client.text_to_speech.convert(
-            text=text,
-            voice_id=_voice_id,
-            model_id="eleven_multilingual_v2",  # High quality, supports multiple languages
-            voice_settings=VoiceSettings(
-                stability=stability,
-                similarity_boost=similarity_boost,
-                style=0.15,  # Slight dramatic flair for AI assistant persona
-                use_speaker_boost=True  # Enhance clarity
-            ),
-            output_format="mp3_44100_128"  # High quality MP3
-        )
+        # Split into F.R.I.D.A.Y.-style bite-sized sentences (max 15 words)
+        # Import dynamically to avoid circular dependency
+        import importlib.util
+        spec = importlib.util.find_spec("speaker")
+        if spec and spec.loader:
+            speaker = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(speaker)
+            sentences = speaker._split_sentences(text, max_words=15)
+        else:
+            # Fallback: simple split if import fails
+            import re
+            sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         
-        # Collect all chunks into a temporary MP3 file
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp_path = tmp.name
-            
-        try:
-            # Write all audio chunks to file
-            with open(tmp_path, 'wb') as f:
-                for chunk in audio_generator:
-                    if chunk:
-                        f.write(chunk)
-            
-            # Apply F.R.I.D.A.Y. speed adjustment if configured
-            playback_path = tmp_path
-            friday_speed = _get_friday_speed()
-            
-            if friday_speed != 1.0:
-                log.info(f"Applying F.R.I.D.A.Y. speed: {friday_speed}x")
-                speed_path = tmp_path.replace(".mp3", "_speed.mp3")
+        log.info(f"Split into {len(sentences)} sentence(s) for clipped delivery")
+        
+        # Synthesize each sentence and collect audio files
+        audio_files = []
+        
+        for i, sentence in enumerate(sentences):
+            if not sentence.strip():
+                continue
                 
-                # Use ffmpeg atempo filter to adjust speed without pitch change
-                result = subprocess.run(
-                    [
-                        "ffmpeg", "-i", tmp_path,
-                        "-filter:a", f"atempo={friday_speed}",
-                        "-y",  # Overwrite output
-                        speed_path
-                    ],
-                    capture_output=True,
-                    timeout=15
-                )
-                
-                if result.returncode == 0 and os.path.exists(speed_path):
-                    playback_path = speed_path
-                else:
-                    log.warning(f"Speed adjustment failed, using normal speed")
-            
-            # Play MP3 via paplay (supports MP3 natively)
-            result = subprocess.run(
-                ["paplay", playback_path],
-                check=True,
-                capture_output=True,
-                timeout=30
+            # Generate audio from ElevenLabs API
+            audio_generator = _client.text_to_speech.convert(
+                text=sentence,
+                voice_id=_voice_id,
+                model_id="eleven_multilingual_v2",
+                voice_settings=VoiceSettings(
+                    stability=stability,
+                    similarity_boost=similarity_boost,
+                    style=0.15,
+                    use_speaker_boost=True
+                ),
+                output_format="mp3_44100_128"
             )
             
-            if result.returncode != 0:
-                log.warning(f"paplay error (code {result.returncode})")
-                return False
+            # Save sentence audio to temp file
+            with tempfile.NamedTemporaryFile(suffix=f"_s{i}.mp3", delete=False) as tmp:
+                sentence_path = tmp.name
+                with open(sentence_path, 'wb') as f:
+                    for chunk in audio_generator:
+                        if chunk:
+                            f.write(chunk)
+                audio_files.append(sentence_path)
+        
+        if not audio_files:
+            log.warning("No audio generated")
+            return False
+        
+        # Concatenate all sentences with pauses using ffmpeg
+        final_path = tempfile.mktemp(suffix="_final.mp3")
+        pause_ms = _get_pause_duration()
+        
+        if len(audio_files) == 1:
+            # Single sentence - no concatenation needed
+            final_path = audio_files[0]
+        else:
+            # Multiple sentences - add pauses between them
+            log.info(f"Adding {pause_ms}ms pauses between {len(audio_files)} sentences")
+            _concatenate_with_pauses(audio_files, final_path, pause_ms)
+        
+        # Apply F.R.I.D.A.Y. speed adjustment if configured
+        playback_path = final_path
+        friday_speed = _get_friday_speed()
+        
+        if friday_speed != 1.0:
+            log.info(f"Applying F.R.I.D.A.Y. speed: {friday_speed}x")
+            speed_path = final_path.replace(".mp3", "_speed.mp3")
             
-            log.info("ElevenLabs synthesis complete")
-            return True
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-i", final_path,
+                    "-filter:a", f"atempo={friday_speed}",
+                    "-y", speed_path
+                ],
+                capture_output=True,
+                timeout=15
+            )
             
-        finally:
-            # Clean up temp files
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-            speed_path = tmp_path.replace(".mp3", "_speed.mp3")
-            if os.path.exists(speed_path):
-                os.unlink(speed_path)
-            
+            if result.returncode == 0 and os.path.exists(speed_path):
+                playback_path = speed_path
+            else:
+                log.warning(f"Speed adjustment failed, using normal speed")
+        
+        # Play final audio
+        result = subprocess.run(
+            ["paplay", playback_path],
+            check=True,
+            capture_output=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            log.warning(f"paplay error (code {result.returncode})")
+            return False
+        
+        log.info("ElevenLabs synthesis complete")
+        return True
+        
     except subprocess.TimeoutExpired:
         log.error("ElevenLabs playback timeout")
         return False
     except Exception as e:
         log.error(f"ElevenLabs TTS failed: {e}")
         return False
+    finally:
+        # Clean up temp files
+        for f in audio_files if 'audio_files' in locals() else []:
+            if os.path.exists(f):
+                os.unlink(f)
+        if 'final_path' in locals() and os.path.exists(final_path):
+            os.unlink(final_path)
+        if 'speed_path' in locals() and os.path.exists(speed_path):
+            os.unlink(speed_path)
+
+
+def _concatenate_with_pauses(audio_files: list, output_path: str, pause_ms: int):
+    """Concatenate audio files with silence pauses between them using ffmpeg."""
+    # Create filter complex for concatenation with silence
+    # Format: [0][silence1][1][silence2][2]...concat
+    filter_parts = []
+    inputs = []
+    
+    for i, audio_file in enumerate(audio_files):
+        inputs.extend(["-i", audio_file])
+        filter_parts.append(f"[{i}:a]")
+        
+        if i < len(audio_files) - 1:
+            # Add silence between sentences (except after last one)
+            filter_parts.append(f"[silence{i}]")
+    
+    # Generate silence segments
+    silence_filters = []
+    for i in range(len(audio_files) - 1):
+        silence_filters.append(f"aevalsrc=0:d={pause_ms/1000}[silence{i}]")
+    
+    # Build concat filter
+    concat_filter = "".join(filter_parts) + f"concat=n={len(filter_parts)}:v=0:a=1[out]"
+    
+    # Combine all filters
+    if silence_filters:
+        full_filter = ";".join(silence_filters) + ";" + concat_filter
+    else:
+        full_filter = concat_filter
+    
+    # Run ffmpeg
+    cmd = ["ffmpeg"] + inputs + [
+        "-filter_complex", full_filter,
+        "-map", "[out]",
+        "-y", output_path
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, timeout=30)
+    
+    if result.returncode != 0:
+        log.error(f"Audio concatenation failed: {result.stderr.decode('utf-8', errors='ignore')}")
+        # Fallback: just use first audio file
+        import shutil
+        shutil.copy(audio_files[0], output_path)
 
 
 def test_elevenlabs():

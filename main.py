@@ -42,6 +42,19 @@ def signal_handler(sig, frame):
     """Graceful shutdown on Ctrl+C or SIGTERM."""
     tui.stop()
     speak(get_farewell())
+    
+    # Clean up resources
+    from browser import close_browser
+    from wake_word import close_ww_stream
+    try:
+        close_browser()
+    except Exception:
+        pass
+    try:
+        close_ww_stream()
+    except Exception:
+        pass
+    
     sys.exit(0)
 
 

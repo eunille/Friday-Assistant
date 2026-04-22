@@ -128,7 +128,7 @@ def handle_stock(text):
     t_price.start()
     t_browser.start()
     if not repeat:
-        speak(get_browser_opening())
+        speak(get_processing_start())
     t_price.join(timeout=10)
     t_browser.join(timeout=15)
 

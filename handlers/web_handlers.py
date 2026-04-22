@@ -73,7 +73,7 @@ def handle_open(text):
             return False
         if "." in target:
             url = target if target.startswith("http") else f"https://{target}"
-            speak(get_browser_opening())
+            speak(get_processing_start())
             try:
                 web.open_url(url)
             except Exception as e:
@@ -86,7 +86,7 @@ def handle_open(text):
             speak(f"Launching {app_name}, boss.")
             update_context("app", app_name)
             return True
-        speak(get_browser_opening())
+        speak(get_processing_start())
         try:
             web.search_site(None, target)
         except Exception as e:
@@ -102,7 +102,7 @@ def handle_search(text):
     match = re.search(r"(?:search|google|look up)\s+(?:for\s+)?(.+)", text)
     if match:
         query = match.group(1).strip()
-        speak(get_browser_opening())
+        speak(get_processing_start())
         try:
             web.search_site(None, query)
         except Exception as e:

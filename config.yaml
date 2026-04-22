@@ -23,6 +23,8 @@ tts:
   friday_speed: 0.95            # ElevenLabs playback speed (0.8-1.2, lower = slower, more deliberate)
                             # 0.95 = 5% slower for subtle AI assistant feel
                             # 1.0 = normal speed
+  sentence_pause_ms: 150    # Pause duration between sentences in milliseconds (F.R.I.D.A.Y. clipped delivery)
+                            # 100 = quick pacing, 150 = measured (recommended), 200 = deliberate
 
 # Wake Word
 wake_word:
