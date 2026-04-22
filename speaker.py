@@ -1,4 +1,4 @@
-# speaker.py — Text-to-speech using Piper TTS with PipeWire playback
+# speaker.py — Text-to-speech using ElevenLabs (primary) or Piper TTS (fallback)
 import subprocess
 import tempfile
 import os
@@ -6,6 +6,7 @@ import threading
 import wave
 from config_loader import get as cfg
 from logger import log
+import speaker_elevenlabs
 
 PIPER_VOICE = None
 SPEECH_SPEED = None
@@ -20,6 +21,11 @@ def _voice():
 
 def _speed():
     return SPEECH_SPEED or cfg("tts", "speed") or 1.0
+
+
+def _provider():
+    """Get configured TTS provider: 'elevenlabs', 'piper', or 'auto'."""
+    return cfg("tts", "provider") or "auto"
 
 
 def is_speaking():
@@ -61,34 +67,56 @@ def _split_sentences(text):
 
 def _speak_sync(text, voice, speed):
     """Internal synchronous speak — runs in thread.
-    Uses Piper as a library (no subprocess) for fast synthesis.
-    Splits into sentences to prevent Piper truncation.
+    Tries ElevenLabs first (if configured), falls back to Piper on failure.
     Lock serializes all speech to prevent overlapping audio."""
     global _is_speaking
 
     with _speaking_lock:
         _is_speaking = True
-        sentences = _split_sentences(text)
+        provider = _provider()
+        success = False
 
         try:
-            piper_voice = _get_piper_voice(voice)
-            from piper.config import SynthesisConfig
-            syn_config = SynthesisConfig(
-                length_scale=1.0 / speed if speed != 1.0 else None,
-            )
+            # Try ElevenLabs first (if not explicitly disabled)
+            if provider in ("auto", "elevenlabs"):
+                log.info("Attempting ElevenLabs TTS...")
+                success = speaker_elevenlabs.speak_elevenlabs(text)
+                
+                if success:
+                    log.info("✓ ElevenLabs TTS successful")
+                elif provider == "elevenlabs":
+                    # User explicitly wants ElevenLabs only — don't fall back
+                    log.warning("ElevenLabs failed and provider=elevenlabs — no fallback")
+                    return
+                else:
+                    # Auto mode — fall back to Piper
+                    log.warning("ElevenLabs failed — falling back to Piper")
+            
+            # Use Piper if ElevenLabs failed or provider is "piper"
+            if not success:
+                log.info("Using Piper TTS...")
+                sentences = _split_sentences(text)
+                piper_voice = _get_piper_voice(voice)
+                from piper.config import SynthesisConfig
+                syn_config = SynthesisConfig(
+                    length_scale=1.0 / speed if speed != 1.0 else None,
+                )
 
-            for sentence in sentences:
-                if not sentence.strip():
-                    continue
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    tmp_path = tmp.name
-                try:
-                    with wave.open(tmp_path, "wb") as wav_file:
-                        piper_voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
-                    subprocess.run(["paplay", tmp_path], check=True, capture_output=True)
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
+                for sentence in sentences:
+                    if not sentence.strip():
+                        continue
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                        tmp_path = tmp.name
+                    try:
+                        with wave.open(tmp_path, "wb") as wav_file:
+                            piper_voice.synthesize_wav(sentence, wav_file, syn_config=syn_config)
+                        subprocess.run(["paplay", tmp_path], check=True, capture_output=True)
+                    finally:
+                        if os.path.exists(tmp_path):
+                            os.unlink(tmp_path)
+                
+                log.info("✓ Piper TTS successful")
+                
         except FileNotFoundError as e:
             log.error(f"Missing dependency: {e}")
         except Exception as e:

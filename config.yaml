@@ -14,8 +14,15 @@ stt:
 
 # Text-to-Speech
 tts:
-  voice: "en_US-ryan-medium"     # Piper voice model (male)
-  speed: 1.0                   # 0.5 = slow, 1.0 = normal, 1.5 = fast
+  provider: "auto"          # auto | elevenlabs | piper
+                            # auto = try ElevenLabs first, fall back to Piper on failure
+                            # elevenlabs = ElevenLabs only (no fallback)
+                            # piper = Piper only
+  voice: "en_US-ryan-medium"     # Piper voice model (male) — used when provider=piper or as fallback
+  speed: 1.0                   # 0.5 = slow, 1.0 = normal, 1.5 = fast — Piper only
+  friday_speed: 0.95            # ElevenLabs playback speed (0.8-1.2, lower = slower, more deliberate)
+                            # 0.95 = 5% slower for subtle AI assistant feel
+                            # 1.0 = normal speed
 
 # Wake Word
 wake_word:
