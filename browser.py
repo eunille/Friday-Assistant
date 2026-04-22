@@ -6,7 +6,8 @@ from logger import log
 
 
 _BROWSER = None
-_PAGE = None
+_PAGE = None        # Extraction/internal page (stays on about:blank)
+_DISPLAY_PAGE = None  # Reusable visible tab for all open_url calls
 _CONTEXT = None
 _PLAYWRIGHT = None
 _LOCK = threading.Lock()
@@ -88,11 +89,23 @@ def _sanitize_url(url):
     return url
 
 
+def _reset_display_page():
+    """Close the display page if it's dead."""
+    global _DISPLAY_PAGE
+    try:
+        if _DISPLAY_PAGE is not None:
+            _DISPLAY_PAGE.close()
+    except Exception:
+        pass
+    _DISPLAY_PAGE = None
+
+
 def _reset_browser():
     """Reset all browser state (called on crash recovery)."""
-    global _BROWSER, _PAGE, _CONTEXT, _PLAYWRIGHT
+    global _BROWSER, _PAGE, _CONTEXT, _PLAYWRIGHT, _DISPLAY_PAGE
     _BROWSER = None
     _PAGE = None
+    _DISPLAY_PAGE = None
     _CONTEXT = None
     if _PLAYWRIGHT:
         try:
@@ -192,11 +205,34 @@ def _ensure_browser():
         return _BROWSER, _PAGE
 
 
+def _get_display_page():
+    """Return the reusable display tab, creating it if needed."""
+    global _DISPLAY_PAGE
+    _, _ = _ensure_browser()  # guarantees _CONTEXT is alive
+    if _DISPLAY_PAGE is not None:
+        try:
+            _DISPLAY_PAGE.evaluate("1")
+            return _DISPLAY_PAGE
+        except Exception:
+            log.warning("Display tab dead, opening a new one")
+            _reset_display_page()
+    _DISPLAY_PAGE = _CONTEXT.new_page()
+    return _DISPLAY_PAGE
+
+
 def open_url(url):
-    """Open a URL in the browser."""
+    """Open a URL in the reusable display tab. Never opens a new browser window."""
     url = _sanitize_url(url)
-    _, page = _ensure_browser()
     with _OP_LOCK:
+        page = _get_display_page()
+        try:
+            current = (page.url or "").split("?")[0].rstrip("/")
+            target = url.split("?")[0].rstrip("/")
+            if current and current == target:
+                log.debug(f"Display tab already on {target}, skipping navigation")
+                return page.title()
+        except Exception:
+            pass
         page.goto(url, wait_until="domcontentloaded", timeout=_page_timeout())
         return page.title()
 
@@ -309,13 +345,21 @@ def scroll_up():
 def get_page_text(max_chars=None):
     if max_chars is None:
         max_chars = _max_page_chars()
-    """Extract visible text content from the current page."""
+    """Extract visible text content from the current page, preferring main content."""
     _, page = _ensure_browser()
-    text = page.inner_text("body")
-    # Clean up excessive whitespace
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
-    cleaned = "\n".join(lines)
-    return cleaned[:max_chars]
+    # Try semantic content containers first to skip nav/ads/sidebars
+    for selector in ("main", "article", '[role="main"]', "#content", ".content", "body"):
+        try:
+            el = page.query_selector(selector)
+            if el:
+                text = el.inner_text()
+                lines = [ln.strip() for ln in text.split("\n") if len(ln.strip()) > 15]
+                cleaned = "\n".join(lines)
+                if len(cleaned) > 200:
+                    return cleaned[:max_chars]
+        except Exception:
+            continue
+    return ""
 
 
 def _ddg_search(query, max_results=5):
@@ -347,8 +391,13 @@ def _ddg_search(query, max_results=5):
                     qs = parse_qs(urlparse(href).query)
                     real_url = qs.get("uddg", [href])[0]
                     real_url = unquote_plus(real_url)
+                elif href.startswith("/y.js") or "ad_domain=" in href or "ad_provider=" in href:
+                    # DDG ad redirect — skip
+                    real_url = None
                 else:
                     real_url = href
+                if not real_url:
+                    return
                 self._current["url"] = real_url
                 self._state = "title"
                 self._buf = []

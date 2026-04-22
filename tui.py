@@ -270,6 +270,26 @@ class FridayTUI:
         center_items.append(Text())
         center_items.append(Align.center(state_text))
 
+        # Subtitle — show what Friday is saying (centered, below state label)
+        if state == STATE_SPEAKING and response:
+            subtitle_width = max((term_w - sidebar_width - 4) if use_sidebar else (term_w - 4), 20)
+            words = response.split()
+            line: list[str] = []
+            lines: list[str] = []
+            for word in words:
+                candidate = " ".join(line + [word])
+                if len(candidate) <= subtitle_width:
+                    line.append(word)
+                else:
+                    if line:
+                        lines.append(" ".join(line))
+                    line = [word]
+            if line:
+                lines.append(" ".join(line))
+            center_items.append(Text())
+            for ln in lines[:3]:
+                center_items.append(Align.center(Text(ln, style=f"italic {CLR_DIM}")))
+
         # Header
         header = Text()
         header.append("  F R I D A Y", style=CLR_HEADER)

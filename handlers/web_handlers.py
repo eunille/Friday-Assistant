@@ -4,7 +4,7 @@ import threading
 
 from speaker import speak
 from personality import get_browser_opening, get_data_ready
-from brain import chat as llm_chat, is_available as llm_available
+from brain import chat as llm_chat, is_available as llm_available, summarize as llm_summarize
 import browser as web
 from context import update_context
 from logger import log
@@ -197,11 +197,14 @@ def handle_knowledge(text):
 
     snippets = []
     best_url = ""
+    _SKIP_DOMAINS = ("duckduckgo.com", "bing.com/aclick", "/y.js")
     for r in results:
-        if r.get("snippet"):
+        r_url = r.get("url", "")
+        is_junk = any(d in r_url for d in _SKIP_DOMAINS)
+        if r.get("snippet") and not is_junk:
             snippets.append(f"• {r['title']}: {r['snippet']}")
-        if not best_url and r.get("url") and r["url"].startswith("http"):
-            best_url = r["url"]
+        if not best_url and r_url.startswith("http") and not is_junk:
+            best_url = r_url
 
     # Start page visit in background while building snippet context
     page_holder = {}
@@ -238,19 +241,36 @@ def handle_knowledge(text):
         return True
 
     if llm_available():
-        prompt = (
-            f"Answer briefly as Friday (AI assistant): \"{text}\"\n\n"
-            f"{context[:1200]}\n\n"
-            f"3-4 sentences. Key facts + your insight. Speak naturally."
-            f"\n/no_think"
+        # Build a compact context — keep total well under 800 chars to fit num_ctx=1024
+        context_text = ""
+        if page_content and len(page_content) > 100:
+            context_text = page_content[:600]
+        elif snippets:
+            context_text = "\n".join(snippets[:3])[:600]
+
+        instruction = (
+            f'Answer this question briefly as Friday (AI assistant): "{text}". '
+            f"Use the source text below. 2-3 sentences, natural speech, key facts only."
         )
-        answer = llm_chat(prompt)
-        if answer:
+        answer = llm_summarize(context_text, instruction, max_predict=120)
+        if answer and len(answer) > 10:
             speak(answer)
         else:
             _speak_raw_content(page_content, snippets)
     else:
         _speak_raw_content(page_content, snippets)
+
+    # After speaking the summary, open the source page so the user can read more
+    if best_url:
+        import random
+        openers = [
+            "Pulled up the source for you, boss.",
+            "Opening the source so you can read more.",
+            "Here's the full article if you want to dig in.",
+            "Putting it on screen for you.",
+        ]
+        speak(random.choice(openers))
+        threading.Thread(target=lambda: web.open_url(best_url), daemon=True).start()
 
     update_context("knowledge", text)
     return True

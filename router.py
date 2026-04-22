@@ -23,7 +23,7 @@ from handlers.web_handlers import (
 from handlers.finance_handlers import (
     handle_stock, handle_crypto, get_crypto_keywords,
 )
-from handlers.news_handlers import handle_news
+from handlers.news_handlers import handle_news, handle_tech_news, handle_tech_followup
 from handlers.system_handlers import (
     handle_volume, handle_screenshot, handle_time,
     handle_timer, handle_system_info, handle_app_launch,
@@ -69,6 +69,14 @@ def process_command(text):
             return
 
     # =====================================================================
+    # CRYPTO — checked BEFORE knowledge so "what is bitcoin" routes here
+    # =====================================================================
+    crypto_kws = get_crypto_keywords()
+    if any(_has_word(text, kw) for kw in crypto_kws):
+        if handle_crypto(text):
+            return
+
+    # =====================================================================
     # VERB 2: "TELL ME" — definitions, explanations, knowledge
     # =====================================================================
     if text.startswith("tell me") or _has_word(
@@ -91,10 +99,12 @@ def process_command(text):
         if handle_world_monitor(text):
             return
 
-    # Check crypto
-    crypto_kws = get_crypto_keywords()
-    if any(_has_word(text, kw) for kw in crypto_kws):
-        if handle_crypto(text):
+    # Tech news → daily.dev (BEFORE general news so "tech news" doesn't fall through)
+    if _has_word(text, "tech news", "latest tech", "technology news",
+                 "what's new in tech", "what's happening in tech",
+                 "trending in tech", "developer news", "daily dev",
+                 "daily.dev", "tech headlines", "latest in tech"):
+        if handle_tech_news(text):
             return
 
     # Check prices (stocks, commodities, futures — LLM resolves ticker)
@@ -175,6 +185,9 @@ def process_command(text):
     if "world_monitor" in ctx:
         if handle_news_followup(text):
             return
+    if "tech_news" in ctx:
+        if handle_tech_followup(text):
+            return
 
     # =====================================================================
     # LLM FALLBACK — classify intent, then conversation
@@ -205,6 +218,10 @@ def process_command(text):
 
         if intent == "news":
             if handle_world_monitor(text):
+                return
+
+        if intent == "tech_news":
+            if handle_tech_news(text):
                 return
 
         if intent == "weather":
@@ -264,7 +281,7 @@ def _classify_intent(text):
     system_prompt = (
         "Classify this voice command. Reply ONLY: CATEGORY|ENTITY\n"
         "If no entity: CATEGORY|none\n"
-        "Categories: check,compare,knowledge,stock,crypto,commodity,news,"
+        "Categories: check,compare,knowledge,stock,crypto,commodity,news,tech_news,"
         "search,open,time,volume,weather,timer,system,app,chat\n"
         f"Context: {ctx_summary}\n"
         "Examples:\n"
@@ -272,6 +289,8 @@ def _classify_intent(text):
         "- compare bitcoin and ethereum -> compare|bitcoin and ethereum\n"
         "- tell me about quantum computing -> knowledge|quantum computing\n"
         "- what's happening in the world -> news|none\n"
+        "- what's the latest tech news -> tech_news|none\n"
+        "- what's trending in tech -> tech_news|none\n"
         "- open youtube -> open|youtube\n"
         "- how is bitcoin -> crypto|bitcoin\n"
         "- how are you -> chat|none\n/no_think"
@@ -281,7 +300,7 @@ def _classify_intent(text):
         if result:
             result = result.strip().lower().rstrip(".")
             valid = ("check", "compare", "knowledge", "stock", "crypto",
-                     "commodity", "news", "search", "open", "time",
+                     "commodity", "news", "tech_news", "search", "open", "time",
                      "volume", "weather", "timer", "system", "app")
             if "|" in result:
                 parts = result.split("|", 1)

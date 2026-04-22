@@ -100,11 +100,45 @@ def get_summary_done():
 
 
 def get_thinking_pause():
-    """Short hesitation filler before delivering data — makes Friday feel more alive."""
+    """Short hesitation filler before delivering data. 'boss' appears here only — never again in the response."""
     return random.choice([
+        "Alright, boss —",
         "Hmm.",
-        "Alright.",
-        "Okay.",
         "Let me see.",
         "Right.",
+        "Copy that, boss —",
+        "Okay.",
+        "Noted, boss —",
+        "Alright.",
+    ])
+
+
+def get_market_quip(direction, change_pct):
+    """Dry one-liner for notable market moves. Returns empty string for normal moves."""
+    abs_change = abs(change_pct)
+    if direction == "down" and abs_change >= 4:
+        return random.choice([
+            "That's... not great.",
+            "Rough day for that one.",
+            "Markets are in a mood.",
+            "Someone's having a bad week.",
+            "Ouch.",
+        ])
+    if direction == "up" and abs_change >= 5:
+        return random.choice([
+            "Solid run.",
+            "Someone's having a good day.",
+            "That's moving.",
+            "Not bad at all.",
+        ])
+    return ""
+
+
+def get_repeat_quip(topic):
+    """Casual sarcasm when the same topic is queried again within a session."""
+    return random.choice([
+        f"Checking {topic} again.",
+        f"Back to {topic}.",
+        f"Still watching {topic}, huh.",
+        f"Running {topic} again.",
     ])

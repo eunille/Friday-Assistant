@@ -6,15 +6,32 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError
 
 from speaker import speak
-from personality import get_browser_opening, get_data_ready, get_summary_done, get_thinking_pause
+from personality import (
+    get_browser_opening, get_data_ready, get_summary_done,
+    get_thinking_pause, get_market_quip, get_repeat_quip,
+)
 from brain import is_available as llm_available, classify as llm_classify
 import browser as web
 from context import update_context
 from config_loader import get as cfg
 from logger import log
+import time as _time
 
 
 _COINGECKO_API = "https://api.coingecko.com/api/v3"
+
+# Track recent queries for repeat-sarcasm: {topic_key: last_timestamp}
+_last_query_time: dict = {}
+_REPEAT_WINDOW = 300  # seconds — queries within 5 min trigger quip
+
+
+def _check_repeat(topic_key):
+    """Return a repeat quip if this topic was recently queried, else empty string."""
+    now = _time.time()
+    if topic_key in _last_query_time and (now - _last_query_time[topic_key]) < _REPEAT_WINDOW:
+        return get_repeat_quip(topic_key)
+    _last_query_time[topic_key] = now
+    return ""
 
 
 _stock_symbols = None
@@ -82,6 +99,11 @@ def handle_stock(text):
     if not symbol:
         return False
 
+    # Repeat-query sarcasm
+    repeat = _check_repeat(f"stock:{symbol}")
+    if repeat:
+        speak(repeat)
+
     # Run browser, data fetch, and TTS in parallel
     stock_data = {}
 
@@ -105,7 +127,8 @@ def handle_stock(text):
     t_browser = threading.Thread(target=_open_browser, daemon=True)
     t_price.start()
     t_browser.start()
-    speak(get_browser_opening())
+    if not repeat:
+        speak(get_browser_opening())
     t_price.join(timeout=10)
     t_browser.join(timeout=15)
 
@@ -118,16 +141,22 @@ def handle_stock(text):
             change_pct = ((price - prev_close) / prev_close) * 100
             direction = "up" if change_pct > 0 else "down"
             speak(
-                f"{get_thinking_pause()} {display_name} is currently at {price:.2f} dollars, "
+                f"{get_thinking_pause()} {display_name} at {price:.2f} dollars, "
                 f"{direction} {abs(change_pct):.1f} percent today."
             )
+            quip = get_market_quip(direction, change_pct)
+            if quip:
+                speak(quip)
         else:
-            speak(f"{get_thinking_pause()} {display_name} is currently at {price:.2f} dollars.")
+            speak(f"{get_thinking_pause()} {display_name} at {price:.2f} dollars.")
     else:
         speak(
             f"I've got {display_name} on screen. "
             "Couldn't pull the live data though."
         )
+
+    speak(get_summary_done())
+    update_context("stock", matched_name, f"https://finance.yahoo.com/quote/{symbol}")
     return True
 
 
