@@ -7,7 +7,7 @@ from urllib.error import URLError
 
 from speaker import speak
 from personality import (
-    get_browser_opening, get_data_ready, get_summary_done,
+    get_processing_start, get_progress_update, get_summary_done,
     get_thinking_pause, get_market_quip, get_repeat_quip,
 )
 from brain import is_available as llm_available, classify as llm_classify
@@ -104,33 +104,42 @@ def handle_stock(text):
     if repeat:
         speak(repeat)
 
-    # Run browser, data fetch, and TTS in parallel
+    # Say we're checking first
+    if not repeat:
+        speak(get_processing_start())
+
+    # Progress timer for long API calls
+    progress_spoken = threading.Event()
+    def _progress_timer():
+        if not progress_spoken.wait(3):  # Wait 3 seconds
+            speak(get_progress_update())
+            progress_spoken.set()
+    
+    timer = threading.Thread(target=_progress_timer, daemon=True)
+    timer.start()
+
+    # Fetch price data silently
     stock_data = {}
+    try:
+        ticker = yf.Ticker(symbol)
+        fi = ticker.fast_info
+        stock_data["price"] = fi.get("lastPrice") or fi.get("regularMarketPrice")
+        stock_data["prev_close"] = fi.get("previousClose")
+        stock_data["name"] = matched_name.title()
+    except Exception as e:
+        log.error(f"Stock data error: {e}")
+    finally:
+        # Cancel progress timer once data is ready
+        progress_spoken.set()
 
-    def _fetch_price():
-        try:
-            ticker = yf.Ticker(symbol)
-            fi = ticker.fast_info
-            stock_data["price"] = fi.get("lastPrice") or fi.get("regularMarketPrice")
-            stock_data["prev_close"] = fi.get("previousClose")
-            stock_data["name"] = matched_name.title()
-        except Exception as e:
-            log.error(f"Stock data error: {e}")
-
+    # Once data is ready, open browser in background and speak result
     def _open_browser():
         try:
             web.open_url(f"https://finance.yahoo.com/quote/{symbol}")
         except Exception as e:
             log.error(f"Browser error opening stock: {e}")
 
-    t_price = threading.Thread(target=_fetch_price, daemon=True)
-    t_browser = threading.Thread(target=_open_browser, daemon=True)
-    t_price.start()
-    t_browser.start()
-    if not repeat:
-        speak(get_processing_start())
-    t_price.join(timeout=10)
-    t_browser.join(timeout=15)
+    threading.Thread(target=_open_browser, daemon=True).start()
 
     price = stock_data.get("price")
     prev_close = stock_data.get("prev_close")
@@ -229,7 +238,18 @@ def handle_crypto(text):
 
     if not coin_name:
         # Overview mode — fetch all overview coins at once
-        speak("Okay boss, let me check the crypto market.")
+        speak(get_processing_start())
+        
+        # Progress timer for long API calls
+        progress_spoken = threading.Event()
+        def _progress_timer():
+            if not progress_spoken.wait(3):
+                speak(get_progress_update())
+                progress_spoken.set()
+        
+        timer = threading.Thread(target=_progress_timer, daemon=True)
+        timer.start()
+        
         overview = _get_overview_coins()
         # Map overview coin names → slugs
         slug_map = {}
@@ -237,16 +257,18 @@ def handle_crypto(text):
             slug = coin_slugs.get(name.lower(), name.lower())
             slug_map[slug] = name
 
+        # Fetch data silently
         data = _coingecko_prices(list(slug_map.keys()))
+        progress_spoken.set()  # Cancel timer once data is ready
 
+        # Once data is ready, open browser and speak
         def _open_overview_browser():
             try:
                 web.open_url("https://www.coingecko.com")
             except Exception as e:
                 log.error(f"Browser error opening CoinGecko: {e}")
 
-        t_browser = threading.Thread(target=_open_overview_browser, daemon=True)
-        t_browser.start()
+        threading.Thread(target=_open_overview_browser, daemon=True).start()
 
         parts = []
         for slug, display_name in slug_map.items():
@@ -261,10 +283,8 @@ def handle_crypto(text):
             price_str = f"{price:,.2f}" if price >= 1 else f"{price:.6f}"
             parts.append(f"{display_name} at {price_str} dollars, {direction} {abs(change):.1f} percent")
 
-        t_browser.join(timeout=15)
-
         if parts:
-            speak("Here's the crypto overview. " + ". ".join(parts) + ".")
+            speak(f"{get_thinking_pause()} the crypto market. " + ". ".join(parts) + ".")
         else:
             speak("I couldn't pull crypto data right now, boss.")
 
@@ -273,28 +293,33 @@ def handle_crypto(text):
         return True
 
     # Single coin mode
+    speak(get_processing_start())
+
+    # Progress timer for long API calls
+    progress_spoken = threading.Event()
+    def _progress_timer():
+        if not progress_spoken.wait(3):
+            speak(get_progress_update())
+            progress_spoken.set()
+    
+    timer = threading.Thread(target=_progress_timer, daemon=True)
+    timer.start()
+
     slug = coin_slugs.get(coin_name, coin_name)
-    speak(f"Okay boss, let me check {coin_name}.")
+    
+    # Fetch data silently
+    result = _coingecko_prices([slug])
+    coin_data = result.get(slug, {})
+    progress_spoken.set()  # Cancel timer once data is ready
 
-    coin_data = {}
-
-    def _fetch_coin():
-        result = _coingecko_prices([slug])
-        if slug in result:
-            coin_data.update(result[slug])
-
+    # Once data is ready, open browser and speak
     def _open_coin_browser():
         try:
             web.open_url(f"https://www.coingecko.com/en/coins/{slug}")
         except Exception as e:
             log.error(f"Browser error opening crypto page: {e}")
 
-    t1 = threading.Thread(target=_fetch_coin, daemon=True)
-    t2 = threading.Thread(target=_open_coin_browser, daemon=True)
-    t1.start()
-    t2.start()
-    t1.join(timeout=10)
-    t2.join(timeout=15)
+    threading.Thread(target=_open_coin_browser, daemon=True).start()
 
     price = coin_data.get("usd")
     change = coin_data.get("usd_24h_change", 0) or 0
@@ -303,9 +328,9 @@ def handle_crypto(text):
     if price:
         direction = "up" if change > 0 else "down"
         price_str = f"{price:,.2f}" if price >= 1 else f"{price:.6f}"
-        speak(f"{display_name} is at {price_str} dollars, {direction} {abs(change):.1f} percent.")
+        speak(f"{get_thinking_pause()} {display_name} at {price_str} dollars, {direction} {abs(change):.1f} percent.")
     else:
-        speak(f"{display_name} data isn't available right now. Markets might be updating.")
+        speak(f"{get_thinking_pause()} {display_name} data isn't available right now. Markets might be updating.")
 
     speak(get_summary_done())
     update_context("crypto", coin_name)

@@ -4,7 +4,7 @@ import feedparser
 
 from speaker import speak
 from brain import chat as llm_chat, is_available as llm_available, summarize as llm_summarize
-from personality import get_summary_done, get_thinking_pause, get_processing_start
+from personality import get_summary_done, get_thinking_pause, get_processing_start, get_progress_update
 import browser as web
 from context import update_context
 from logger import log
@@ -49,26 +49,21 @@ def handle_world_monitor(text):
     global _last_overview, _last_headlines
     speak(get_processing_start())
 
-    # Fetch RSS and open browser in parallel
-    headlines_result = []
+    # Progress timer for long fetch/LLM calls
+    progress_spoken = threading.Event()
+    def _progress_timer():
+        if not progress_spoken.wait(3):
+            speak(get_progress_update())
+            progress_spoken.set()
+    
+    timer = threading.Thread(target=_progress_timer, daemon=True)
+    timer.start()
 
-    def _fetch():
-        headlines_result.extend(_fetch_headlines())
-
-    def _open_browser():
-        try:
-            web.open_url("https://www.worldmonitor.app/")
-        except Exception as e:
-            log.error(f"Browser error opening World Monitor: {e}")
-
-    t_fetch = threading.Thread(target=_fetch, daemon=True)
-    t_browser = threading.Thread(target=_open_browser, daemon=True)
-    t_fetch.start()
-    t_browser.start()
-    t_fetch.join(timeout=10)
-    t_browser.join(timeout=15)
+    # Fetch RSS headlines silently first
+    headlines_result = _fetch_headlines()
 
     if not headlines_result:
+        progress_spoken.set()
         speak("I couldn't pull any news right now, boss.")
         _last_overview = None
         _last_headlines = None
@@ -82,17 +77,34 @@ def handle_world_monitor(text):
     if llm_available():
         overview = llm_summarize(
             _last_headlines,
-            "You're F.R.I.D.A.Y., Tony Stark's AI. Summarize these news headlines in 2-3 sentences. "
+            "You're F.R.I.D.A.Y., Tony Stark's AI. Summarize these news headlines in 5-6 sentences. "
             "Make it engaging and informative — highlight the most dramatic or impactful stories first. "
+            "Cover multiple major stories from different regions or topics. "
             "Use active language. Don't say 'according to' or 'the news says' — just state the facts with confidence. "
-            "Example: 'Markets are in freefall after the Fed announcement. Meanwhile, tensions escalate in...'",
-            max_predict=150,
+            "Example: 'Markets are in freefall after the Fed announcement, with tech stocks leading the decline. "
+            "Meanwhile, tensions escalate in Eastern Europe as diplomatic talks stall. "
+            "In Asia, trade negotiations continue with mixed signals from both sides. "
+            "Climate talks in Geneva reached a breakthrough on carbon credits...'",
+            max_predict=250,
         )
     else:
         # No LLM — just read top 3 headlines
         top3 = headlines_result[:3]
         overview = ". ".join(h.split(".")[0] for h in top3)
+    
+    progress_spoken.set()  # Cancel timer once data is ready
 
+    # Now that data is ready, open browser and speak simultaneously
+    def _open_browser():
+        try:
+            web.open_url("https://www.worldmonitor.app/")
+        except Exception as e:
+            log.error(f"Browser error opening World Monitor: {e}")
+
+    # Start browser in background
+    threading.Thread(target=_open_browser, daemon=True).start()
+
+    # Speak the overview immediately after data is ready
     if overview:
         speak(f"{get_thinking_pause()} the latest reports, {overview}")
         _last_overview = overview

@@ -73,6 +73,19 @@ def get_processing_start():
     ])
 
 
+def get_progress_update():
+    """Said during longer processing (3+ seconds) to maintain flow — Iron Man / Friday style.
+    This is the 'just a sec boss' moment when API calls are taking longer than expected."""
+    return random.choice([
+        "Just a sec boss, getting it done.",
+        "Still pulling that data, one moment.",
+        "Working on it, almost there.",
+        "Give me just a moment, boss.",
+        "Hang on, processing that now.",
+        "One sec, still fetching.",
+    ])
+
+
 def get_data_ready():
     """Said when data is ready to present."""
     return random.choice([
