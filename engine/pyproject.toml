@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "friday"
+version = "0.3.0"
+description = "Friday voice assistant engine"
+requires-python = ">=3.12"
+dependencies = [
+    # Audio I/O (PortAudio bundled)
+    "sounddevice",
+    "numpy",
+    # Speech-to-text
+    "faster-whisper",
+    # Wake word
+    "openwakeword>=0.6.0",
+    # Text-to-speech
+    "piper-tts",
+    "kokoro-onnx",
+    # LLM
+    "ollama",
+    "httpx",
+    "huggingface_hub",
+    # API
+    "fastapi",
+    "uvicorn[standard]",
+    # Web / data
+    "playwright",
+    "beautifulsoup4",
+    "feedparser",
+    "requests",
+    "yfinance",
+    # System / UI
+    "psutil",
+    "rich",
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+friday = "friday.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+# Inherited code: long lines and import order get fixed as files are touched.
+ignore = ["E501", "I001", "E402", "W291", "W293"]
